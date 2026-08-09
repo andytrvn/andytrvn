@@ -389,10 +389,36 @@ body.topbar-modal-open {
   let dsFileId = null;
   let dsPushTimer = null;
   let dsApplyingRemote = false;
-  let dsLastSyncedJson = null;
+  let dsSyncBusy = false;
+  let dsSyncQueued = null;
 
   const _dsOrigSet = localStorage.setItem.bind(localStorage);
   const _dsOrigRemove = localStorage.removeItem.bind(localStorage);
+
+  // Cheap non-cryptographic hash (FNV-1a) — just for "did this value change
+  // since we last synced it", not security.
+  function dsHash(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16);
+  }
+
+  // Per-key hash of the last value we know is reconciled with Drive, so we
+  // can tell "changed on this device since last sync" apart from "was
+  // already like this." Persisted (as hashes, not full content, so photo-
+  // sized values don't get duplicated) so it survives page reloads —
+  // without this, every reload would forget what was already synced and
+  // treat all local data as new, clobbering whatever the other device has.
+  function dsLoadBaseline() {
+    try { return JSON.parse(localStorage.getItem('__ds_baseline')) || null; } catch (e) { return null; }
+  }
+  function dsSaveBaseline(hashes) {
+    try { _dsOrigSet('__ds_baseline', JSON.stringify(hashes)); } catch (e) {}
+  }
+  let dsBaselineHashes = dsLoadBaseline();
 
   // Wrap setItem/removeItem so a sync-side error can NEVER prevent the
   // underlying write from happening. The original call always runs;
@@ -491,7 +517,7 @@ body.topbar-modal-open {
         dsAccessToken = resp.access_token;
         dsFileId = null;
         dsSetMeta({ everSignedIn: true });
-        dsPullAndApply(true);
+        dsSync({ reloadIfChanged: true });
       },
     });
   }
@@ -554,6 +580,7 @@ body.topbar-modal-open {
       method: 'PATCH',
       headers: { Authorization: 'Bearer ' + dsAccessToken, 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      keepalive: true, // let the request finish even if the tab is being backgrounded/closed
     });
     if (!res.ok) throw new Error('drive push failed: ' + res.status);
   }
@@ -564,58 +591,117 @@ body.topbar-modal-open {
     if (dsTokenClient) { try { dsTokenClient.requestAccessToken({ prompt: '' }); } catch (e) {} }
   }
 
-  // Local edits always win: push whatever's currently in localStorage,
-  // debounced so rapid typing doesn't spam the API.
-  async function dsPushLocal() {
+  function dsTryParseArray(str) {
+    try { const v = JSON.parse(str); return Array.isArray(v) ? v : null; } catch (e) { return null; }
+  }
+
+  // If a key's local and remote values have both changed since the last
+  // sync AND both happen to be JSON arrays (goal lists, stack items, gym
+  // sets, ...), union them instead of picking one side wholesale — this is
+  // what makes "added a task on both devices before either had synced"
+  // end up with both tasks instead of whichever device synced last winning.
+  // Returns null if the values aren't both arrays, so the caller falls
+  // back to plain last-writer-wins for that key.
+  function dsUnionArrays(localStr, remoteStr) {
+    const la = dsTryParseArray(localStr);
+    const ra = dsTryParseArray(remoteStr);
+    if (!la || !ra) return null;
+    const seen = new Set(ra.map(x => JSON.stringify(x)));
+    const out = ra.slice();
+    for (const item of la) {
+      const s = JSON.stringify(item);
+      if (!seen.has(s)) { out.push(item); seen.add(s); }
+    }
+    return JSON.stringify(out);
+  }
+
+  // The one sync routine, used for every trigger (local edit, tab focus,
+  // sign-in). Always reconciles in both directions:
+  //   1. Pull whatever's currently in Drive.
+  //   2. Merge in any locally-changed keys (per key, not a whole-file
+  //      overwrite) — a key only overrides Drive's copy if it actually
+  //      differs from what we last knew to be in sync (tracked via
+  //      per-key hashes persisted in dsBaselineHashes), so an edit on
+  //      *this* device can't clobber an unrelated edit made on another
+  //      device that this one hasn't seen yet. If BOTH sides changed the
+  //      same key and it's a JSON array, union it instead of picking one.
+  //   3. Push the merged result if it differs from what Drive had.
+  //   4. Apply the merged result back into localStorage (picks up
+  //      anything the other device added) — reloading only when it's
+  //      safe to (nothing mid-edit) and the caller wants it.
+  async function dsSync(opts) {
+    opts = opts || {};
     if (!dsAccessToken) return;
-    const snapshot = dsCollectSnapshot();
-    const json = JSON.stringify(snapshot);
-    if (json === dsLastSyncedJson) return;
+    if (dsSyncBusy) { dsSyncQueued = opts; return; }
+    dsSyncBusy = true;
     dsSetStatus('syncing');
     try {
-      const savedAt = Date.now();
-      await dsPushRemoteRaw({ savedAt, data: snapshot });
-      dsLastSyncedJson = json;
+      const local = dsCollectSnapshot();
+      const baseline = dsBaselineHashes;
+      const remote = await dsPullRemote();
+      const remoteData = (remote && remote.data) || {};
+      const merged = Object.assign({}, remoteData);
+
+      for (const k of Object.keys(local)) {
+        const knownHash = baseline && baseline[k];
+        const isDirty = !knownHash || knownHash !== dsHash(local[k]);
+        if (!isDirty) continue;
+        if (k in remoteData && remoteData[k] !== local[k]) {
+          const unioned = dsUnionArrays(local[k], remoteData[k]);
+          merged[k] = unioned != null ? unioned : local[k];
+        } else {
+          merged[k] = local[k];
+        }
+      }
+      if (baseline) {
+        for (const k of Object.keys(baseline)) {
+          // Deleted locally, and nobody else changed it since our last sync → delete.
+          if (!(k in local) && (!(k in remoteData) || dsHash(remoteData[k]) === baseline[k])) delete merged[k];
+        }
+      }
+
+      let savedAt = (remote && remote.savedAt) || 0;
+      if (JSON.stringify(merged) !== JSON.stringify(remoteData)) {
+        savedAt = Date.now();
+        await dsPushRemoteRaw({ savedAt, data: merged });
+      }
+
+      const changedLocally = dsApplyRemoteSnapshot(merged);
+      const newHashes = {};
+      for (const k of Object.keys(merged)) newHashes[k] = dsHash(merged[k]);
+      dsBaselineHashes = newHashes;
+      dsSaveBaseline(newHashes);
       dsSetMeta({ lastSavedAt: savedAt });
       dsSetStatus('synced');
+      if (changedLocally && opts.reloadIfChanged && !dsIsEditing()) {
+        setTimeout(() => location.reload(), 150);
+      }
     } catch (e) {
       dsSetStatus('error');
       dsMaybeSilentReauth(e);
+    } finally {
+      dsSyncBusy = false;
+      if (dsSyncQueued) {
+        const next = dsSyncQueued;
+        dsSyncQueued = null;
+        dsSync(next);
+      }
     }
   }
 
   function dsScheduleDebouncedPush() {
     if (!dsAccessToken) return;
     clearTimeout(dsPushTimer);
-    dsPushTimer = setTimeout(dsPushLocal, 1500);
+    dsPushTimer = setTimeout(() => dsSync({}), 1500);
   }
 
-  // Only called at "safe" moments (load, sign-in, tab focus/visible) —
-  // never mid-edit — so it's safe to overwrite local state with Drive's.
-  async function dsPullAndApply(reloadIfChanged) {
-    if (!dsAccessToken) return;
-    if (dsIsEditing()) return;
-    dsSetStatus('syncing');
-    try {
-      const remote = await dsPullRemote();
-      const remoteData = (remote && remote.data) || {};
-      if (Object.keys(remoteData).length === 0) {
-        // Nothing in the cloud yet — seed it with whatever's local.
-        dsSetStatus('synced');
-        await dsPushLocal();
-        return;
-      }
-      const remoteJson = JSON.stringify(remoteData);
-      if (remoteJson === dsLastSyncedJson) { dsSetStatus('synced'); return; }
-      const changed = dsApplyRemoteSnapshot(remoteData);
-      dsLastSyncedJson = remoteJson;
-      dsSetMeta({ lastSavedAt: remote.savedAt || Date.now() });
-      dsSetStatus('synced');
-      if (changed && reloadIfChanged) setTimeout(() => location.reload(), 150);
-    } catch (e) {
-      dsSetStatus('error');
-      dsMaybeSilentReauth(e);
-    }
+  // Push immediately (skip the debounce wait) — used when the tab is
+  // about to be backgrounded or closed, so a pending edit isn't lost.
+  function dsFlushPendingSync() {
+    if (!dsAccessToken || !dsPushTimer) return;
+    clearTimeout(dsPushTimer);
+    dsPushTimer = null;
+    dsSync({});
   }
 
   function dsSignOut() {
@@ -626,7 +712,6 @@ body.topbar-modal-open {
     } catch (e) {}
     dsAccessToken = null;
     dsFileId = null;
-    dsLastSyncedJson = null;
     dsSetMeta({ everSignedIn: false });
     dsSetStatus('idle');
   }
@@ -709,12 +794,16 @@ body.topbar-modal-open {
 
     // Re-render when localStorage changes from another tab/window OR when
     // the page becomes visible (sync may have pulled in the background).
-    // Also re-pull from Drive at those same moments.
+    // Also re-sync with Drive at those same moments.
     window.addEventListener('storage', render);
-    window.addEventListener('focus', () => { render(); dsPullAndApply(true); });
+    window.addEventListener('focus', () => { render(); dsSync({ reloadIfChanged: true }); });
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) { render(); dsPullAndApply(true); }
+      if (!document.hidden) { render(); dsSync({ reloadIfChanged: true }); }
+      else { dsFlushPendingSync(); } // tab is being backgrounded — don't lose a pending edit
     });
+    // Covers the tab/app actually closing (visibilitychange doesn't always
+    // fire in time on mobile Safari when the app is swiped away).
+    window.addEventListener('pagehide', dsFlushPendingSync);
 
     // Periodic refresh so counts stay current after midnight rollover etc.
     setInterval(render, 30 * 1000);
