@@ -1,21 +1,16 @@
-﻿// =============================================================
+// =============================================================
 // Persistent dashboard top bar.
 // Drop this on any page with:
 //     <script src="topbar.js" defer></script>
 // It self-injects HTML + CSS, reads progress from the same
-// localStorage keys the dashboard's tabs already use, and a
-// water "+1" button writes to localStorage and (if configured)
-// pushes a merged update to the Supabase health row so the
-// new bottle appears on every device within ~1 second.
+// localStorage keys the dashboard's tabs already use, and syncs
+// the *entire* localStorage state to a hidden file in the signed-in
+// user's Google Drive (appDataFolder) so the same data shows up on
+// every device. Nothing else on any page needs to change — this
+// file wraps localStorage.setItem/removeItem globally.
 // =============================================================
 (function () {
   'use strict';
-
-  // -------- Supabase config (same project as the rest of the dashboard) --------
-  // For your audience's standalone, replace these with placeholders
-  // and have them paste their own values, just like the other pages.
-  const TOPBAR_SUPABASE_URL = 'PASTE-YOUR-SUPABASE-PROJECT-URL-HERE';
-  const TOPBAR_SUPABASE_KEY = 'PASTE-YOUR-SUPABASE-PUBLISHABLE-KEY-HERE';
 
   // -------- CSS --------
   const css = `
@@ -108,6 +103,36 @@
 .topbar-water-add.flash {
   background: linear-gradient(180deg, rgba(125, 211, 252, 0.65), rgba(110, 231, 183, 0.65));
 }
+.topbar-sync-btn {
+  flex: 0 0 auto;
+  width: 38px; height: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 15px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  position: relative;
+}
+.topbar-sync-btn:hover { background: rgba(255, 255, 255, 0.07); color: #FAFAFA; }
+.topbar-sync-dot {
+  position: absolute; top: 6px; right: 6px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+}
+.topbar-sync-btn.syncing .topbar-sync-dot {
+  background: #F2C063;
+  animation: topbar-sync-pulse 1s ease-in-out infinite;
+}
+.topbar-sync-btn.synced .topbar-sync-dot { background: #6ee7b7; }
+.topbar-sync-btn.error .topbar-sync-dot {
+  background: #ff8a8a;
+  animation: topbar-miss-pulse 1.6s ease-in-out infinite;
+}
+@keyframes topbar-sync-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 @media (max-width: 480px) {
   .topbar { padding-left: 10px; padding-right: 10px; gap: 4px; }
@@ -115,6 +140,7 @@
   .topbar-pill-label { font-size: 9px; letter-spacing: 0.10em; }
   .topbar-pill-count { font-size: 11px; }
   .topbar-water-add { width: 32px; font-size: 16px; }
+  .topbar-sync-btn { width: 32px; height: 32px; font-size: 13px; }
 }
 @media (max-width: 380px) {
   .topbar-pill-label { display: none; }
@@ -195,6 +221,9 @@ body.topbar-modal-open {
     <span class="topbar-pill-dot"></span>
     <span class="topbar-pill-label">FINANCE</span>
   </a>
+  <button class="topbar-sync-btn" id="topbarSync" type="button" title="Click to sign in and sync across devices">
+    ☁<span class="topbar-sync-dot" id="topbarSyncDot"></span>
+  </button>
 </header>
 `;
 
@@ -320,28 +349,6 @@ body.topbar-modal-open {
     };
   }
 
-  async function pushWaterMergedToSupabase(localWater) {
-    // Only do this when we're NOT on the health page — health page
-    // has its own sync that already detects the localStorage change.
-    if (window.location.pathname.endsWith('/health.html') ||
-        window.location.pathname.endsWith('health.html')) return;
-
-    if (!window.supabase || !TOPBAR_SUPABASE_URL || !TOPBAR_SUPABASE_KEY) return;
-    if (TOPBAR_SUPABASE_URL.indexOf('PASTE-') === 0) return;
-
-    try {
-      const supa = window.supabase.createClient(TOPBAR_SUPABASE_URL, TOPBAR_SUPABASE_KEY);
-      const { data } = await supa
-        .from('app_state').select('data').eq('key', 'health').maybeSingle();
-      const current = (data && data.data) || {};
-      const merged = Object.assign({}, current, { po_water_v1: localWater });
-      await supa.from('app_state').upsert(
-        { key: 'health', data: merged, updated_at: new Date().toISOString() },
-        { onConflict: 'key' }
-      );
-    } catch (e) { /* offline — local change will sync next time user visits health */ }
-  }
-
   function addWater() {
     let state = null;
     try { state = JSON.parse(localStorage.getItem('po_water_v1')); } catch (e) {}
@@ -357,8 +364,288 @@ body.topbar-modal-open {
       btn.classList.add('flash');
       setTimeout(() => btn.classList.remove('flash'), 220);
     }
+  }
 
-    pushWaterMergedToSupabase(state);
+  // =============================================================
+  // Cloud sync via Google Drive (appDataFolder)
+  // -------------------------------------------------------------
+  // Mirrors the page's *entire* localStorage to one hidden JSON file
+  // in the signed-in user's Google Drive app-data folder (not visible
+  // in their normal Drive UI). Works the same on every page since it
+  // doesn't know or care what the keys mean — it just keeps whatever
+  // is in localStorage in sync across devices signed into the same
+  // Google account.
+  //
+  // If you're not signed in, everything behaves exactly as before —
+  // pure local-only localStorage, no network calls.
+  // =============================================================
+  const DRIVE_CLIENT_ID = '774079251219-5of21s9telrbdd5s6hmgccno5qhhv4j3.apps.googleusercontent.com';
+  const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+  const DRIVE_FILE_NAME = 'dashboard-sync.json';
+  const DS_SKIP_PREFIX = '__ds_';
+
+  let dsTokenClient = null;
+  let dsAccessToken = null;
+  let dsFileId = null;
+  let dsPushTimer = null;
+  let dsApplyingRemote = false;
+  let dsLastSyncedJson = null;
+
+  const _dsOrigSet = localStorage.setItem.bind(localStorage);
+  const _dsOrigRemove = localStorage.removeItem.bind(localStorage);
+
+  // Wrap setItem/removeItem so a sync-side error can NEVER prevent the
+  // underlying write from happening. The original call always runs;
+  // any error in sync scheduling is swallowed.
+  localStorage.setItem = function (k, v) {
+    _dsOrigSet(k, v);
+    try {
+      if (!dsApplyingRemote && k.indexOf(DS_SKIP_PREFIX) !== 0) dsScheduleDebouncedPush();
+    } catch (e) {}
+  };
+  localStorage.removeItem = function (k) {
+    _dsOrigRemove(k);
+    try {
+      if (!dsApplyingRemote && k.indexOf(DS_SKIP_PREFIX) !== 0) dsScheduleDebouncedPush();
+    } catch (e) {}
+  };
+
+  function dsMeta() {
+    try { return JSON.parse(localStorage.getItem('__ds_meta')) || {}; } catch (e) { return {}; }
+  }
+  function dsSetMeta(patch) {
+    const m = Object.assign({}, dsMeta(), patch);
+    try { _dsOrigSet('__ds_meta', JSON.stringify(m)); } catch (e) {}
+    return m;
+  }
+
+  function dsCollectSnapshot() {
+    const out = {};
+    for (const k of Object.keys(localStorage)) {
+      if (k.indexOf(DS_SKIP_PREFIX) === 0) continue;
+      out[k] = localStorage.getItem(k);
+    }
+    return out;
+  }
+
+  // Applies a full remote snapshot on top of localStorage: writes any
+  // changed keys, deletes local (non-internal) keys the remote doesn't
+  // have. Returns true if anything actually changed.
+  function dsApplyRemoteSnapshot(remoteData) {
+    dsApplyingRemote = true;
+    let changed = false;
+    try {
+      for (const k in remoteData) {
+        if (!Object.prototype.hasOwnProperty.call(remoteData, k)) continue;
+        if (localStorage.getItem(k) !== remoteData[k]) {
+          _dsOrigSet(k, remoteData[k]);
+          changed = true;
+        }
+      }
+      for (const k of Object.keys(localStorage)) {
+        if (k.indexOf(DS_SKIP_PREFIX) === 0) continue;
+        if (!(k in remoteData)) { _dsOrigRemove(k); changed = true; }
+      }
+    } finally {
+      dsApplyingRemote = false;
+    }
+    return changed;
+  }
+
+  function dsIsEditing() {
+    const ae = document.activeElement;
+    if (!ae) return false;
+    const tag = ae.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (ae.getAttribute && ae.getAttribute('contenteditable') === 'true') return true;
+    return false;
+  }
+
+  function dsSetStatus(status) {
+    const btn = document.getElementById('topbarSync');
+    if (!btn) return;
+    btn.classList.remove('syncing', 'synced', 'error');
+    if (status === 'syncing') { btn.classList.add('syncing'); btn.title = 'Syncing…'; }
+    else if (status === 'synced') { btn.classList.add('synced'); btn.title = 'Synced with Google Drive — click to sign out'; }
+    else if (status === 'error') { btn.classList.add('error'); btn.title = 'Sync error — click to retry'; }
+    else { btn.title = 'Click to sign in and sync across devices'; }
+  }
+
+  function loadGisScript(cb) {
+    if (window.google && window.google.accounts && window.google.accounts.oauth2) { cb(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true;
+    s.onload = cb;
+    s.onerror = () => {};
+    document.head.appendChild(s);
+  }
+
+  function dsInitTokenClient() {
+    if (dsTokenClient) return;
+    dsTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: DRIVE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback: (resp) => {
+        if (!resp || resp.error) { dsSetStatus('idle'); return; }
+        dsAccessToken = resp.access_token;
+        dsFileId = null;
+        dsSetMeta({ everSignedIn: true });
+        dsPullAndApply(true);
+      },
+    });
+  }
+
+  async function dsFindFile() {
+    const q = "name='" + DRIVE_FILE_NAME + "' and trashed=false";
+    const res = await fetch(
+      'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id)&q=' + encodeURIComponent(q),
+      { headers: { Authorization: 'Bearer ' + dsAccessToken } }
+    );
+    if (!res.ok) throw new Error('drive find failed: ' + res.status);
+    const j = await res.json();
+    return (j.files && j.files[0] && j.files[0].id) || null;
+  }
+
+  async function dsCreateFile(initialJson) {
+    const boundary = 'ds_boundary_314159265';
+    const metadata = { name: DRIVE_FILE_NAME, parents: ['appDataFolder'] };
+    const body =
+      '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(metadata) + '\r\n' +
+      '--' + boundary + '\r\nContent-Type: application/json\r\n\r\n' + initialJson + '\r\n' +
+      '--' + boundary + '--';
+    const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + dsAccessToken,
+        'Content-Type': 'multipart/related; boundary=' + boundary,
+      },
+      body,
+    });
+    if (!res.ok) throw new Error('drive create failed: ' + res.status);
+    const j = await res.json();
+    return j.id;
+  }
+
+  async function dsEnsureFile() {
+    if (dsFileId) return dsFileId;
+    const cached = dsMeta().fileId;
+    if (cached) { dsFileId = cached; return dsFileId; }
+    let id = await dsFindFile();
+    if (!id) id = await dsCreateFile(JSON.stringify({ savedAt: 0, data: {} }));
+    dsFileId = id;
+    dsSetMeta({ fileId: id });
+    return id;
+  }
+
+  async function dsPullRemote() {
+    const id = await dsEnsureFile();
+    const res = await fetch('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media', {
+      headers: { Authorization: 'Bearer ' + dsAccessToken },
+    });
+    if (!res.ok) throw new Error('drive pull failed: ' + res.status);
+    const text = await res.text();
+    try { return JSON.parse(text); } catch (e) { return { savedAt: 0, data: {} }; }
+  }
+
+  async function dsPushRemoteRaw(payload) {
+    const id = await dsEnsureFile();
+    const res = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + id + '?uploadType=media', {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer ' + dsAccessToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error('drive push failed: ' + res.status);
+  }
+
+  function dsMaybeSilentReauth(err) {
+    if (String(err && err.message).indexOf('401') === -1) return;
+    dsAccessToken = null;
+    if (dsTokenClient) { try { dsTokenClient.requestAccessToken({ prompt: '' }); } catch (e) {} }
+  }
+
+  // Local edits always win: push whatever's currently in localStorage,
+  // debounced so rapid typing doesn't spam the API.
+  async function dsPushLocal() {
+    if (!dsAccessToken) return;
+    const snapshot = dsCollectSnapshot();
+    const json = JSON.stringify(snapshot);
+    if (json === dsLastSyncedJson) return;
+    dsSetStatus('syncing');
+    try {
+      const savedAt = Date.now();
+      await dsPushRemoteRaw({ savedAt, data: snapshot });
+      dsLastSyncedJson = json;
+      dsSetMeta({ lastSavedAt: savedAt });
+      dsSetStatus('synced');
+    } catch (e) {
+      dsSetStatus('error');
+      dsMaybeSilentReauth(e);
+    }
+  }
+
+  function dsScheduleDebouncedPush() {
+    if (!dsAccessToken) return;
+    clearTimeout(dsPushTimer);
+    dsPushTimer = setTimeout(dsPushLocal, 1500);
+  }
+
+  // Only called at "safe" moments (load, sign-in, tab focus/visible) —
+  // never mid-edit — so it's safe to overwrite local state with Drive's.
+  async function dsPullAndApply(reloadIfChanged) {
+    if (!dsAccessToken) return;
+    if (dsIsEditing()) return;
+    dsSetStatus('syncing');
+    try {
+      const remote = await dsPullRemote();
+      const remoteData = (remote && remote.data) || {};
+      if (Object.keys(remoteData).length === 0) {
+        // Nothing in the cloud yet — seed it with whatever's local.
+        dsSetStatus('synced');
+        await dsPushLocal();
+        return;
+      }
+      const remoteJson = JSON.stringify(remoteData);
+      if (remoteJson === dsLastSyncedJson) { dsSetStatus('synced'); return; }
+      const changed = dsApplyRemoteSnapshot(remoteData);
+      dsLastSyncedJson = remoteJson;
+      dsSetMeta({ lastSavedAt: remote.savedAt || Date.now() });
+      dsSetStatus('synced');
+      if (changed && reloadIfChanged) setTimeout(() => location.reload(), 150);
+    } catch (e) {
+      dsSetStatus('error');
+      dsMaybeSilentReauth(e);
+    }
+  }
+
+  function dsSignOut() {
+    try {
+      if (dsAccessToken && window.google && google.accounts && google.accounts.oauth2) {
+        google.accounts.oauth2.revoke(dsAccessToken, () => {});
+      }
+    } catch (e) {}
+    dsAccessToken = null;
+    dsFileId = null;
+    dsLastSyncedJson = null;
+    dsSetMeta({ everSignedIn: false });
+    dsSetStatus('idle');
+  }
+
+  function dsHandleSyncClick(e) {
+    e.preventDefault();
+    if (dsAccessToken) { dsSignOut(); return; }
+    loadGisScript(() => {
+      dsInitTokenClient();
+      dsTokenClient.requestAccessToken({ prompt: '' });
+    });
+  }
+
+  function dsAttemptSilentRestore() {
+    if (!dsMeta().everSignedIn) return;
+    loadGisScript(() => {
+      dsInitTokenClient();
+      dsTokenClient.requestAccessToken({ prompt: '' });
+    });
   }
 
   // -------- Mobile lockdown helpers --------
@@ -411,17 +698,23 @@ body.topbar-modal-open {
   // -------- Boot --------
   function boot() {
     injectStyleAndHTML();
-    const btn = document.getElementById('topbarWaterAdd');
-    if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); addWater(); });
+    const waterBtn = document.getElementById('topbarWaterAdd');
+    if (waterBtn) waterBtn.addEventListener('click', (e) => { e.preventDefault(); addWater(); });
+    const syncBtn = document.getElementById('topbarSync');
+    if (syncBtn) syncBtn.addEventListener('click', dsHandleSyncClick);
     render();
     lockGestures();
     startModalLock();
+    dsAttemptSilentRestore();
 
     // Re-render when localStorage changes from another tab/window OR when
     // the page becomes visible (sync may have pulled in the background).
+    // Also re-pull from Drive at those same moments.
     window.addEventListener('storage', render);
-    window.addEventListener('focus', render);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+    window.addEventListener('focus', () => { render(); dsPullAndApply(true); });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) { render(); dsPullAndApply(true); }
+    });
 
     // Periodic refresh so counts stay current after midnight rollover etc.
     setInterval(render, 30 * 1000);
