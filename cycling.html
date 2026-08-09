@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0b">
+<title>Ride Coach</title>
+<script src="topbar.js" defer></script>
+
+<!-- =============================================================
+     EDIT THIS BLOCK TO MAKE THE APP YOURS.
+     Everything else (logs, bikes, edits you make in the app) is
+     saved to localStorage on each device.
+     ============================================================= -->
+<script>
+const CONFIG = {
+  appTitle: "Ride Coach",
+
+  // Distance unit shown everywhere. "km" or "mi".
+  units: "km",
+
+  // Weekly distance goal, in the unit above.
+  weeklyGoalKm: 100,
+
+  // Ride types shown as a segmented control when logging a ride.
+  rideTypes: ["Road", "Gravel", "Indoor", "Commute", "MTB"],
+
+  // Starter bike(s). chainRetireAtKm is when the app flags the chain
+  // as due for replacement (~2500-3500km is typical).
+  bikes: [
+    { name: "Road bike", chainRetireAtKm: 3000 }
+  ]
+};
+</script>
+
+<style>
+:root {
+  --bg: #0a0a0b;
+  --bg-card: #111113;
+  --text-1: #ffffff;
+  --text-2: rgba(255,255,255,0.6);
+  --text-3: rgba(255,255,255,0.4);
+  --text-4: rgba(255,255,255,0.25);
+  --border: rgba(255,255,255,0.06);
+  --border-strong: rgba(255,255,255,0.14);
+  --accent: #ffffff;
+  --good: #6ee7b7;
+  --warn: #fbbf24;
+  --bad: #ff8a8a;
+  --font: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SF Mono, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: radial-gradient(ellipse 80% 60% at 50% 0%, #14141a 0%, #0a0a0b 60%);
+  color: var(--text-1);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  min-height: 100vh;
+  overflow-x: hidden;
+  width: 100%;
+  max-width: 100vw;
+}
+.po-shell {
+  width: 100%; max-width: min(720px, 100vw);
+  margin: 0 auto;
+  padding: 24px 16px calc(40px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+.po-shell *, .tabbar * { min-width: 0; }
+img, video, canvas, svg { max-width: 100%; }
+
+.po-day-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.10em;
+  text-transform: uppercase;
+  cursor: default; margin-bottom: 10px;
+}
+.po-day-date { color: var(--text-2); }
+.po-day-sep { color: var(--text-4); }
+.po-day-split { color: var(--good); font-weight: 800; }
+.po-day-split.is-rest { color: #7DD3FC; }
+
+.po-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 18px;
+}
+.po-title { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; margin: 0; }
+.po-icon-btn {
+  width: 38px; height: 38px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, border-color 0.18s;
+  -webkit-tap-highlight-color: transparent;
+}
+.po-icon-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-1); }
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 14px;
+}
+
+.po-sub-section { margin-top: 22px; }
+.po-sub-section:first-child { margin-top: 0; }
+.po-sub-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--text-3);
+  margin-bottom: 10px;
+}
+.po-sub-title::before { content: ''; width: 24px; height: 1px; background: var(--border-strong); }
+
+.po-seg-control {
+  display: flex; flex: 1;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 12px; padding: 4px; gap: 3px;
+  flex-wrap: wrap;
+}
+.po-seg-btn {
+  flex: 1 1 auto; min-width: 56px; padding: 10px 8px; border: none; background: transparent;
+  color: var(--text-3); border-radius: 8px;
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.po-seg-btn:hover { color: var(--text-2); background: rgba(255,255,255,0.04); }
+.po-seg-btn.active {
+  background: linear-gradient(180deg, #ffffff 0%, #e8e5dd 100%);
+  color: #0a0a0b;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 4px 12px rgba(0,0,0,0.35);
+}
+
+.po-exercise-bar { display: flex; gap: 8px; align-items: center; }
+.po-ex-select {
+  flex: 1 1 0; min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.28);
+  color: var(--text-1); border-radius: 12px;
+  font-family: inherit; font-size: 14px; font-weight: 500;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%2387847B' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px;
+  text-overflow: ellipsis; overflow: hidden;
+}
+.po-ex-select:focus { outline: none; border-color: rgba(255,255,255,0.40); box-shadow: 0 0 0 3px rgba(255,255,255,0.06); }
+
+.po-last-set {
+  display: none; align-items: center; gap: 12px;
+  padding: 11px 14px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 12px; font-size: 12px;
+}
+.po-last-set.show { display: flex; }
+.po-last-label { color: var(--text-3); font-weight: 700; letter-spacing: 0.10em; text-transform: uppercase; font-size: 10px; }
+.po-last-value { color: var(--text-1); font-weight: 700; font-variant-numeric: tabular-nums; }
+.po-last-meta { color: var(--text-3); font-size: 11px; margin-left: auto; font-family: var(--font-mono); text-align: right; }
+
+.po-log-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.po-field { display: flex; flex-direction: column; gap: 8px; }
+.po-field > label { font-size: 10.5px; color: var(--text-3); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+.po-field input[type="number"], .po-field input[type="text"] {
+  padding: 14px 12px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.28);
+  color: var(--text-1);
+  border-radius: 12px; font-family: inherit;
+  font-size: 22px; font-weight: 700; text-align: center;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  width: 100%;
+}
+.po-field input[type="text"] { font-size: 14px; font-weight: 500; text-align: left; }
+.po-field input[type="number"]::-webkit-outer-spin-button,
+.po-field input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.po-field input:focus { outline: none; border-color: rgba(255,255,255,0.40); box-shadow: 0 0 0 3px rgba(255,255,255,0.06); }
+.po-field input[type="date"] {
+  padding: 12px 12px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.28);
+  color: var(--text-1);
+  border-radius: 12px; font-family: inherit;
+  font-size: 14px; font-weight: 600;
+  color-scheme: dark;
+  width: 100%;
+}
+.po-field input[type="date"]:focus { outline: none; border-color: rgba(255,255,255,0.40); box-shadow: 0 0 0 3px rgba(255,255,255,0.06); }
+.po-field input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.85); opacity: 0.7; cursor: pointer; }
+
+.rc-preview {
+  text-align: center; font-family: var(--font-mono);
+  font-size: 12.5px; color: var(--text-2);
+  margin: -4px 0 16px;
+}
+
+.po-btn-primary {
+  width: 100%; padding: 14px;
+  border: 1px solid rgba(255,255,255,0.85);
+  background: linear-gradient(180deg, #ffffff 0%, #e8e5dd 100%);
+  color: #0a0a0b; border-radius: 12px;
+  font-family: inherit; font-size: 14px; font-weight: 700;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 4px 14px rgba(0,0,0,0.40);
+  -webkit-tap-highlight-color: transparent;
+}
+.po-btn-primary:hover { transform: translateY(-1px); }
+.po-btn-primary:active { transform: translateY(0) scale(0.98); }
+
+.po-btn-secondary {
+  padding: 12px 18px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.04);
+  color: var(--text-1); border-radius: 12px;
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.po-btn-secondary:hover { background: rgba(255,255,255,0.10); }
+
+.po-stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.po-stat-box { padding: 14px 12px; background: rgba(255,255,255,0.025); border: 1px solid var(--border); border-radius: 12px; text-align: center; }
+.po-stat-label { font-size: 10px; font-weight: 700; letter-spacing: 0.10em; text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
+.po-stat-val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.po-unit { font-size: 11px; color: var(--text-3); font-weight: 500; margin-left: 2px; }
+
+.po-spark-wrap { position: relative; }
+.po-spark-svg { width: 100%; height: 60px; display: block; }
+.po-spark-line { fill: none; stroke: var(--text-1); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.po-spark-fill { fill: url(#sparkGrad); }
+.po-spark-empty { text-align: center; font-size: 11px; color: var(--text-3); padding: 18px 0; }
+
+.po-empty { padding: 14px 0; text-align: center; font-size: 12px; color: var(--text-3); font-style: italic; }
+.po-hist-row {
+  display: grid; grid-template-columns: 46px 1fr auto; gap: 12px;
+  padding: 10px 4px; align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.po-hist-row:last-child { border-bottom: none; }
+.po-hist-date { font-size: 11px; color: var(--text-3); font-family: var(--font-mono); }
+.po-hist-set { font-size: 13px; font-weight: 600; line-height: 1.4; }
+.po-hist-del { background: transparent; border: none; color: var(--text-4); font-size: 16px; cursor: pointer; padding: 4px 8px; -webkit-tap-highlight-color: transparent; }
+.po-hist-del:hover { color: var(--bad); }
+
+.po-tw-past-toggle {
+  width: 100%; margin-top: 10px;
+  display: flex; align-items: center; justify-content: space-between;
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-2); border-radius: 10px;
+  padding: 11px 14px; cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.04em;
+  -webkit-tap-highlight-color: transparent;
+}
+.po-tw-past-toggle:hover { background: rgba(255,255,255,0.04); color: var(--text-1); }
+.po-tw-past-count { display: inline-block; margin-left: 6px; background: rgba(255,255,255,0.06); color: var(--text-2); padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.po-tw-past-arrow { transition: transform 0.2s; font-size: 14px; }
+.po-tw-past-toggle[aria-expanded="true"] .po-tw-past-arrow { transform: rotate(180deg); }
+
+/* ----- Modals ----- */
+.po-modal-bg {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.65); backdrop-filter: blur(6px);
+  z-index: 100; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.po-modal-bg.show { display: flex; }
+.po-modal { width: 100%; max-width: 420px; background: var(--bg-card); border: 1px solid var(--border-strong); border-radius: 16px; padding: 22px; max-height: 88vh; overflow-y: auto; }
+.po-modal h3 { margin: 0 0 16px; font-size: 17px; font-weight: 700; }
+.po-modal .po-field { margin-bottom: 12px; }
+.po-modal .po-field label { font-size: 11px; color: var(--text-3); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.po-modal-seg { display: flex; gap: 4px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+.po-modal-seg button { flex: 1; padding: 9px; border: none; background: transparent; color: var(--text-3); border-radius: 7px; font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.po-modal-seg button.active { background: linear-gradient(180deg, #ffffff 0%, #e8e5dd 100%); color: #0a0a0b; }
+.po-modal-actions { display: flex; gap: 8px; margin-top: 18px; }
+.po-modal-actions button { flex: 1; }
+.po-delete-link { display: block; text-align: center; margin-top: 12px; font-size: 12px; color: var(--bad); cursor: pointer; text-decoration: underline; padding: 6px; }
+.po-secondary-link { display: block; text-align: center; margin-top: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; text-decoration: underline; padding: 6px; }
+
+.po-set-section { margin-bottom: 22px; }
+.po-set-section h4 { margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-3); }
+.po-set-list { display: flex; flex-direction: column; gap: 6px; }
+.po-set-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: rgba(255,255,255,0.025); border: 1px solid var(--border); border-radius: 8px; }
+.po-set-row input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--text-1); font-family: inherit; font-size: 13px; padding: 4px 0; }
+.po-set-row .po-mini-btn { background: transparent; border: none; color: var(--text-4); font-size: 14px; cursor: pointer; padding: 4px 8px; -webkit-tap-highlight-color: transparent; }
+.po-set-row .po-mini-btn:hover { color: var(--bad); }
+.po-add-row-btn { width: 100%; margin-top: 6px; padding: 10px; background: rgba(255,255,255,0.025); border: 1px dashed var(--border); color: var(--text-2); border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 12px; -webkit-tap-highlight-color: transparent; }
+.po-add-row-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-1); }
+
+/* ----- Equipment (bike chain wear) rows ----- */
+.eq-row { padding: 12px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.eq-row:last-child { border-bottom: none; }
+.eq-row-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.eq-name { font-size: 13.5px; font-weight: 600; color: var(--text-1); }
+.eq-km { font-size: 11.5px; color: var(--text-3); font-family: var(--font-mono); white-space: nowrap; }
+.eq-bar-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.06); overflow: hidden; }
+.eq-bar-fill { height: 100%; border-radius: 999px; transition: width 0.4s ease; }
+
+/* ----- Weekly ring (matches the Day Ring on the goals page) ----- */
+.wk-ring-wrap {
+  display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: center;
+  gap: 24px;
+}
+.wk-ring { position: relative; width: 156px; height: 156px; flex-shrink: 0; }
+.wk-ring svg { width: 100%; height: 100%; display: block; }
+.wk-ring-track { fill: none; stroke: rgba(255,255,255,0.06); stroke-width: 8; }
+.wk-ring-fill {
+  fill: none; stroke-width: 8; stroke-linecap: round;
+  transform: rotate(-90deg); transform-origin: 60px 60px;
+  transition: stroke 0.7s cubic-bezier(0.22, 1, 0.36, 1), stroke-dashoffset 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.wk-ring-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.wk-ring-percent { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; color: var(--text-1); line-height: 1; }
+.wk-ring-phase { margin-top: 5px; font-family: var(--font-mono); font-size: 9.5px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-3); }
+.wk-ring-text { display: flex; flex-direction: column; gap: 6px; max-width: 280px; }
+.wk-ring-main { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.wk-ring-main .po-unit { font-size: 13px; }
+.wk-ring-sub { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+.wk-streak { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); color: var(--text-3); font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; width: fit-content; margin-top: 2px; }
+.wk-streak-icon { font-size: 12px; }
+.wk-streak-num { font-family: var(--font-mono); font-weight: 700; font-variant-numeric: tabular-nums; }
+.wk-streak.wk-streak-active { background: rgba(242,192,99,0.10); color: #F2C063; border-color: rgba(242,192,99,0.32); }
+
+@media (max-width: 480px) {
+  .wk-ring { width: 128px; height: 128px; }
+  .wk-ring-percent { font-size: 27px; }
+}
+</style>
+</head>
+<body>
+
+<div class="po-shell">
+  <button class="po-day-pill" id="weekPill" type="button" title="This week's progress toward your goal">
+    <span class="po-day-date" id="weekPillRange">—</span>
+    <span class="po-day-sep">·</span>
+    <span class="po-day-split" id="weekPillStatus">—</span>
+  </button>
+
+  <div class="po-header">
+    <h1 class="po-title" id="appTitle">Ride Coach</h1>
+    <button class="po-icon-btn" id="settingsBtn" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </div>
+
+  <div class="card">
+    <div class="wk-ring-wrap">
+      <div class="wk-ring">
+        <svg viewBox="0 0 120 120">
+          <circle class="wk-ring-track" cx="60" cy="60" r="52"/>
+          <circle class="wk-ring-fill" id="ringFill" cx="60" cy="60" r="52"/>
+        </svg>
+        <div class="wk-ring-overlay">
+          <div class="wk-ring-percent" id="ringPct">0%</div>
+          <div class="wk-ring-phase">THIS WEEK</div>
+        </div>
+      </div>
+      <div class="wk-ring-text">
+        <div class="wk-ring-main"><span id="weekKm">0.0</span> <span class="po-unit" id="weekUnit1">km</span> <span style="color:var(--text-3);font-weight:500;">/ <span id="weekGoalKm">100</span> <span id="weekUnit2">km</span></span></div>
+        <div class="wk-ring-sub" id="weekMeta">0 rides this week</div>
+        <div class="wk-streak" id="streakPill">
+          <span class="wk-streak-icon">🔥</span>
+          <span class="wk-streak-num" id="streakNum">0</span>
+          <span>week streak</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="po-sub-title">Log a ride</div>
+
+    <div class="po-last-set" id="lastRideRow">
+      <span class="po-last-label">Last ride</span>
+      <span class="po-last-value" id="lastRideValue"></span>
+      <span class="po-last-meta" id="lastRideMeta"></span>
+    </div>
+
+    <div class="po-field" style="margin-bottom:14px;">
+      <label>Date</label>
+      <input type="date" id="rideDate">
+    </div>
+
+    <div class="po-log-grid">
+      <div class="po-field">
+        <label>Distance (<span id="distUnitLabel">km</span>)</label>
+        <input type="number" id="rideDistance" step="0.1" min="0" inputmode="decimal" placeholder="0.0">
+      </div>
+      <div class="po-field">
+        <label>Duration (min)</label>
+        <input type="number" id="rideDuration" step="0.5" min="0" inputmode="decimal" placeholder="0">
+      </div>
+    </div>
+    <div class="po-field" style="margin-bottom:8px;">
+      <label>Elevation gain (m)</label>
+      <input type="number" id="rideElev" step="1" min="0" inputmode="decimal" placeholder="0">
+    </div>
+    <div class="rc-preview" id="speedPreview">Enter distance + duration for avg speed</div>
+
+    <div class="po-sub-section">
+      <div class="po-sub-title">Type</div>
+      <div class="po-seg-control" id="typeSeg"></div>
+    </div>
+
+    <div class="po-sub-section">
+      <div class="po-sub-title">Bike</div>
+      <div class="po-exercise-bar">
+        <select class="po-ex-select" id="bikeSelect"></select>
+      </div>
+    </div>
+
+    <div class="po-field" style="margin-top:16px;">
+      <label>Note (optional)</label>
+      <input type="text" id="rideNote" placeholder="e.g. headwind on the way back">
+    </div>
+
+    <button class="po-btn-primary" id="logRideBtn" style="margin-top:16px;">Log ride</button>
+  </div>
+
+  <div class="card">
+    <div class="po-sub-title">Personal records</div>
+    <div class="po-stats-row">
+      <div class="po-stat-box">
+        <div class="po-stat-label">Longest ride</div>
+        <div class="po-stat-val" id="prLongest">—</div>
+      </div>
+      <div class="po-stat-box">
+        <div class="po-stat-label">Best avg speed</div>
+        <div class="po-stat-val" id="prBestSpeed">—</div>
+      </div>
+      <div class="po-stat-box">
+        <div class="po-stat-label">Most climbed</div>
+        <div class="po-stat-val" id="prMostElev">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="po-sub-title">Weekly trend (last 8 weeks)</div>
+    <div class="po-spark-wrap">
+      <svg class="po-spark-svg" id="sparkline" viewBox="0 0 300 60" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="sparkGrad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="rgba(255,255,255,0.18)"/>
+            <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <div class="po-spark-empty" id="sparkEmpty">Need 2+ weeks of rides for a trend</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="po-sub-title">Bikes</div>
+    <div id="bikeList"></div>
+    <button class="po-add-row-btn" id="addBikeBtn" type="button">+ Add bike</button>
+  </div>
+
+  <div class="card">
+    <div class="po-sub-title">History</div>
+    <div id="historyCard"><div class="po-empty">No rides logged yet.</div></div>
+    <button type="button" class="po-tw-past-toggle" id="histMoreToggle" style="display:none;" aria-expanded="false">
+      <span>Show more <span class="po-tw-past-count" id="histMoreCount"></span></span>
+      <span class="po-tw-past-arrow">▾</span>
+    </button>
+  </div>
+</div>
+
+<!-- Add / Edit Bike Modal -->
+<div class="po-modal-bg" id="bikeModalBg">
+  <div class="po-modal">
+    <h3 id="bikeModalTitle">Add bike</h3>
+    <div class="po-field">
+      <label>Name</label>
+      <input type="text" id="bikeName" placeholder="e.g. Road bike">
+    </div>
+    <div class="po-field">
+      <label>Chain replace at (<span id="bikeUnitLabel">km</span>)</label>
+      <input type="number" id="bikeChainAt" value="3000">
+    </div>
+    <div class="po-modal-actions">
+      <button class="po-btn-secondary" id="bikeModalCancel">Cancel</button>
+      <button class="po-btn-primary" id="bikeModalSave">Save</button>
+    </div>
+    <span class="po-secondary-link" id="bikeChainReset" style="display:none">Mark chain replaced (reset counter)</span>
+    <span class="po-delete-link" id="bikeDelete" style="display:none">Delete this bike</span>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="po-modal-bg" id="setModalBg">
+  <div class="po-modal" style="max-width: 480px;">
+    <h3>Settings</h3>
+
+    <div class="po-set-section">
+      <h4>Units</h4>
+      <div class="po-modal-seg" id="setUnitsSeg">
+        <button type="button" data-u="km">km</button>
+        <button type="button" data-u="mi">mi</button>
+      </div>
+    </div>
+
+    <div class="po-set-section">
+      <h4>Weekly goal (<span id="setGoalUnitLabel">km</span>)</h4>
+      <div class="po-field">
+        <input type="number" id="setWeeklyGoal" step="1" min="1">
+      </div>
+    </div>
+
+    <div class="po-set-section">
+      <h4>Ride types</h4>
+      <div class="po-set-list" id="setTypes"></div>
+      <button class="po-add-row-btn" id="setAddType" type="button">+ Add type</button>
+    </div>
+
+    <div class="po-set-section">
+      <h4>Data</h4>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="po-btn-secondary" id="setExport" type="button">Export JSON</button>
+        <button class="po-btn-secondary" id="setImport" type="button">Import JSON</button>
+        <button class="po-btn-secondary" id="setReset" type="button" style="color:var(--bad);border-color:rgba(255,138,138,0.3)">Reset all</button>
+      </div>
+      <input type="file" id="setImportFile" accept=".json" style="display:none">
+    </div>
+
+    <div class="po-modal-actions">
+      <button class="po-btn-primary" id="setModalClose">Done</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const $ = (id) => document.getElementById(id);
+  const SETTINGS_KEY = 'cycle_coach_settings_v1';
+  const LOGS_KEY = 'cycle_coach_logs_v1';
+  const KM_TO_MI = 0.621371;
+
+  function uid() { return 'b_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function todayStr() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function parseDateLocal(str) {
+    const p = str.split('-').map(Number);
+    return new Date(p[0], p[1] - 1, p[2]);
+  }
+  function startOfWeek(d) {
+    d = new Date(d);
+    const day = (d.getDay() + 6) % 7; // 0 = Monday
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - day);
+    return d;
+  }
+
+  // ============================================================
+  // STATE — settings + bikes in one small object, ride logs as their
+  // own array. Kept separate so cross-device sync can union two
+  // devices' ride lists together instead of one overwriting the other
+  // (see topbar.js's Drive sync — it merges whole-array keys).
+  // ============================================================
+  function loadSettings() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY)); } catch (e) {}
+    if (!s || typeof s !== 'object') s = {};
+    s.units = s.units === 'mi' ? 'mi' : (CONFIG.units === 'mi' ? 'mi' : 'km');
+    s.weeklyGoalKm = (typeof s.weeklyGoalKm === 'number' && s.weeklyGoalKm > 0) ? s.weeklyGoalKm : (CONFIG.weeklyGoalKm || 100);
+    s.rideTypes = (Array.isArray(s.rideTypes) && s.rideTypes.length) ? s.rideTypes : (CONFIG.rideTypes || ['Road']).slice();
+    s.bikes = Array.isArray(s.bikes) ? s.bikes : (CONFIG.bikes || []).map(b => Object.assign({ id: uid(), chainResetAt: null, deletedAt: null }, b));
+    if (!s.activeBikeId || !s.bikes.some(b => b.id === s.activeBikeId && !b.deletedAt)) {
+      const firstActive = s.bikes.find(b => !b.deletedAt);
+      s.activeBikeId = firstActive ? firstActive.id : null;
+    }
+    if (!s.selectedType || s.rideTypes.indexOf(s.selectedType) === -1) s.selectedType = s.rideTypes[0];
+    return s;
+  }
+  function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {} }
+  let settings = loadSettings();
+
+  function loadLogs() {
+    try { const v = JSON.parse(localStorage.getItem(LOGS_KEY)); if (Array.isArray(v)) return v; } catch (e) {}
+    return [];
+  }
+  function saveLogs() { try { localStorage.setItem(LOGS_KEY, JSON.stringify(logs)); } catch (e) {} }
+  let logs = loadLogs(); // { id, date:'YYYY-MM-DD', km, minutes, elevM, type, bikeId, note, loggedAt }
+
+  document.getElementById('appTitle').textContent = CONFIG.appTitle || 'Ride Coach';
+
+  // ============================================================
+  // UNIT HELPERS — km stored internally always; display converts.
+  // Elevation always shown in meters, regardless of distance unit.
+  // ============================================================
+  function toDisplayDist(km) { return settings.units === 'mi' ? km * KM_TO_MI : km; }
+  function fromDisplayDist(v) { return settings.units === 'mi' ? v / KM_TO_MI : v; }
+  function unitLabel() { return settings.units; }
+  function speedUnitLabel() { return settings.units === 'mi' ? 'mph' : 'km/h'; }
+  function fmtDist(km, decimals) {
+    decimals = decimals == null ? 1 : decimals;
+    return toDisplayDist(km || 0).toFixed(decimals);
+  }
+  function fmtSpeed(km, minutes) {
+    if (!km || km <= 0 || !minutes || minutes <= 0) return '—';
+    const speed = toDisplayDist(km) / (minutes / 60);
+    return speed.toFixed(1) + ' ' + speedUnitLabel();
+  }
+  function fmtDuration(minutes) {
+    const h = Math.floor(minutes / 60);
+    const m = Math.round(minutes % 60);
+    return h > 0 ? (h + 'h ' + m + 'm') : (m + 'm');
+  }
+
+  // ============================================================
+  // WEEK MATH
+  // ============================================================
+  function computeWeekTotals(anyDateInWeek) {
+    const start = startOfWeek(anyDateInWeek);
+    const end = new Date(start); end.setDate(end.getDate() + 7);
+    let km = 0, minutes = 0, elevM = 0, count = 0;
+    for (const r of logs) {
+      const rd = parseDateLocal(r.date);
+      if (rd >= start && rd < end) { km += r.km; minutes += r.minutes; elevM += (r.elevM || 0); count++; }
+    }
+    return { km, minutes, elevM, count, start, end };
+  }
+  function computeStreak() {
+    const thisWeekStart = startOfWeek(new Date());
+    let count = 0;
+    let cursor = new Date(thisWeekStart); cursor.setDate(cursor.getDate() - 7);
+    for (let i = 0; i < 520; i++) {
+      const wt = computeWeekTotals(cursor);
+      if (wt.count === 0) break;
+      if (wt.km >= settings.weeklyGoalKm) { count++; cursor.setDate(cursor.getDate() - 7); }
+      else break;
+    }
+    return count;
+  }
+
+  // ============================================================
+  // RENDER
+  // ============================================================
+  const RING_C = 2 * Math.PI * 52;
+
+  function renderWeekPill(wt) {
+    const end = new Date(wt.end); end.setDate(end.getDate() - 1);
+    const fmt = d => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    $('weekPillRange').textContent = fmt(wt.start) + ' – ' + fmt(end);
+    const pct = settings.weeklyGoalKm > 0 ? (wt.km / settings.weeklyGoalKm) * 100 : 0;
+    const statusEl = $('weekPillStatus');
+    statusEl.textContent = pct >= 100 ? 'GOAL MET' : Math.round(pct) + '%';
+    statusEl.classList.toggle('is-rest', pct < 100);
+  }
+
+  function renderRing(wt) {
+    const pct = settings.weeklyGoalKm > 0 ? Math.min(100, (wt.km / settings.weeklyGoalKm) * 100) : 0;
+    const fill = $('ringFill');
+    fill.style.strokeDasharray = RING_C;
+    fill.style.strokeDashoffset = RING_C * (1 - pct / 100);
+    fill.style.stroke = pct >= 100 ? '#6ee7b7' : '#ffffff';
+    $('ringPct').textContent = Math.round(pct) + '%';
+    $('weekKm').textContent = fmtDist(wt.km, 1);
+    $('weekGoalKm').textContent = fmtDist(settings.weeklyGoalKm, 0);
+    $('weekUnit1').textContent = unitLabel();
+    $('weekUnit2').textContent = unitLabel();
+    $('weekMeta').textContent = wt.count + (wt.count === 1 ? ' ride' : ' rides') + (wt.elevM ? ' · ' + Math.round(wt.elevM) + 'm climbed' : '') + ' this week';
+  }
+
+  function renderStreak() {
+    const c = computeStreak();
+    $('streakNum').textContent = c;
+    $('streakPill').classList.toggle('wk-streak-active', c > 0);
+  }
+
+  function sortedLogsDesc() {
+    return logs.slice().sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      return (b.loggedAt || 0) - (a.loggedAt || 0);
+    });
+  }
+
+  function renderLastRide() {
+    const row = $('lastRideRow');
+    const sorted = sortedLogsDesc();
+    if (!sorted.length) { row.classList.remove('show'); return; }
+    const last = sorted[0];
+    row.classList.add('show');
+    $('lastRideValue').textContent = fmtDist(last.km, 1) + ' ' + unitLabel();
+    $('lastRideMeta').textContent = fmtSpeed(last.km, last.minutes) + ' · ' + last.type;
+  }
+
+  function renderTypeSeg() {
+    const wrap = $('typeSeg');
+    wrap.innerHTML = '';
+    settings.rideTypes.forEach(t => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'po-seg-btn' + (t === settings.selectedType ? ' active' : '');
+      b.textContent = t;
+      b.addEventListener('click', () => { settings.selectedType = t; saveSettings(); renderTypeSeg(); });
+      wrap.appendChild(b);
+    });
+  }
+
+  function renderBikeSelect() {
+    const sel = $('bikeSelect');
+    const prev = sel.value;
+    sel.innerHTML = '';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = ''; noneOpt.textContent = 'No bike tracked';
+    sel.appendChild(noneOpt);
+    settings.bikes.filter(b => !b.deletedAt).forEach(b => {
+      const o = document.createElement('option');
+      o.value = b.id; o.textContent = b.name;
+      sel.appendChild(o);
+    });
+    sel.value = settings.activeBikeId || prev || '';
+  }
+
+  function renderPRs() {
+    if (!logs.length) {
+      $('prLongest').textContent = '—';
+      $('prBestSpeed').textContent = '—';
+      $('prMostElev').textContent = '—';
+      return;
+    }
+    const longest = logs.reduce((a, b) => (b.km > a.km ? b : a), logs[0]);
+    $('prLongest').innerHTML = fmtDist(longest.km, 1) + '<span class="po-unit">' + unitLabel() + '</span>';
+
+    const longRides = logs.filter(r => r.km >= 20 && r.minutes > 0);
+    if (longRides.length) {
+      const fastest = longRides.reduce((a, b) => ((b.km / b.minutes) > (a.km / a.minutes) ? b : a));
+      $('prBestSpeed').textContent = fmtSpeed(fastest.km, fastest.minutes);
+    } else {
+      $('prBestSpeed').textContent = '—';
+    }
+
+    const climbed = logs.reduce((a, b) => ((b.elevM || 0) > (a.elevM || 0) ? b : a), logs[0]);
+    $('prMostElev').innerHTML = (climbed.elevM ? Math.round(climbed.elevM) : '—') + '<span class="po-unit">m</span>';
+  }
+
+  function renderTrend() {
+    const weeks = [];
+    const thisStart = startOfWeek(new Date());
+    for (let i = 7; i >= 0; i--) {
+      const ws = new Date(thisStart); ws.setDate(ws.getDate() - 7 * i);
+      weeks.push(computeWeekTotals(ws).km);
+    }
+    const svg = $('sparkline');
+    svg.querySelectorAll('.po-spark-line, .po-spark-fill').forEach(el => el.remove());
+    const nonZero = weeks.filter(v => v > 0).length;
+    if (nonZero < 2) { $('sparkEmpty').style.display = 'block'; return; }
+    $('sparkEmpty').style.display = 'none';
+
+    const max = Math.max.apply(null, weeks.concat([1]));
+    const w = 300, h = 60, pad = 4;
+    const stepX = (w - 2 * pad) / (weeks.length - 1);
+    const pts = weeks.map((v, i) => [pad + i * stepX, h - pad - (v / max) * (h - 2 * pad)]);
+    const linePath = 'M' + pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L');
+    const fillPath = linePath + ' L' + pts[pts.length - 1][0].toFixed(1) + ',' + (h - pad) + ' L' + pts[0][0].toFixed(1) + ',' + (h - pad) + ' Z';
+
+    const fillEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    fillEl.setAttribute('class', 'po-spark-fill'); fillEl.setAttribute('d', fillPath);
+    const lineEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    lineEl.setAttribute('class', 'po-spark-line'); lineEl.setAttribute('d', linePath);
+    svg.appendChild(fillEl); svg.appendChild(lineEl);
+  }
+
+  function kmSinceChainReset(bike) {
+    const since = bike.chainResetAt || 0;
+    return logs.filter(r => r.bikeId === bike.id && (r.loggedAt || 0) >= since).reduce((s, r) => s + r.km, 0);
+  }
+
+  function renderBikes() {
+    const wrap = $('bikeList');
+    wrap.innerHTML = '';
+    const active = settings.bikes.filter(b => !b.deletedAt);
+    if (!active.length) { wrap.innerHTML = '<div class="po-empty">No bikes tracked yet.</div>'; return; }
+    active.forEach(bike => {
+      const km = kmSinceChainReset(bike);
+      const pct = bike.chainRetireAtKm > 0 ? Math.min(100, (km / bike.chainRetireAtKm) * 100) : 0;
+      const color = pct >= 100 ? 'var(--bad)' : pct >= 85 ? 'var(--warn)' : 'var(--good)';
+      const row = document.createElement('div');
+      row.className = 'eq-row';
+      row.innerHTML =
+        '<div class="eq-row-top"><span class="eq-name">' + escapeHtml(bike.name) + '</span>' +
+        '<span class="eq-km">' + fmtDist(km, 0) + ' / ' + fmtDist(bike.chainRetireAtKm, 0) + ' ' + unitLabel() + ' since chain</span></div>' +
+        '<div class="eq-bar-track"><div class="eq-bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div>';
+      row.addEventListener('click', () => openBikeModal(bike.id));
+      wrap.appendChild(row);
+    });
+  }
+
+  function renderHistory() {
+    const card = $('historyCard');
+    const sorted = sortedLogsDesc();
+    const toggle = $('histMoreToggle');
+    if (!sorted.length) {
+      card.innerHTML = '<div class="po-empty">No rides logged yet.</div>';
+      toggle.style.display = 'none';
+      return;
+    }
+    const showAll = card.dataset.expanded === '1';
+    const visible = showAll ? sorted : sorted.slice(0, 6);
+    card.innerHTML = '';
+    visible.forEach(r => {
+      const bike = settings.bikes.find(b => b.id === r.bikeId);
+      const row = document.createElement('div');
+      row.className = 'po-hist-row';
+      const bits = [fmtDist(r.km, 1) + ' ' + unitLabel(), fmtSpeed(r.km, r.minutes), r.type];
+      if (r.elevM) bits.push(Math.round(r.elevM) + 'm');
+      if (bike) bits.push(bike.name);
+      if (r.note) bits.push(r.note);
+      row.innerHTML =
+        '<span class="po-hist-date">' + r.date.slice(5) + '</span>' +
+        '<span class="po-hist-set">' + escapeHtml(bits.join(' · ')) + '</span>' +
+        '<button class="po-hist-del" data-id="' + r.id + '" aria-label="Delete ride">×</button>';
+      card.appendChild(row);
+    });
+    card.querySelectorAll('.po-hist-del').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!confirm('Delete this ride?')) return;
+        logs = logs.filter(r => r.id !== btn.dataset.id);
+        saveLogs();
+        renderAll();
+      });
+    });
+    if (sorted.length > 6) {
+      toggle.style.display = 'flex';
+      toggle.setAttribute('aria-expanded', showAll ? 'true' : 'false');
+      toggle.querySelector('span:first-child').childNodes[0].textContent = showAll ? 'Show less ' : 'Show more ';
+      $('histMoreCount').textContent = showAll ? sorted.length : (sorted.length - 6);
+    } else {
+      toggle.style.display = 'none';
+    }
+  }
+  $('histMoreToggle').addEventListener('click', () => {
+    const card = $('historyCard');
+    card.dataset.expanded = card.dataset.expanded === '1' ? '0' : '1';
+    renderHistory();
+  });
+
+  function updateSpeedPreview() {
+    const distDisp = parseFloat($('rideDistance').value) || 0;
+    const mins = parseFloat($('rideDuration').value) || 0;
+    const km = fromDisplayDist(distDisp);
+    $('speedPreview').textContent = (km > 0 && mins > 0) ? (fmtSpeed(km, mins) + ' avg speed') : 'Enter distance + duration for avg speed';
+  }
+  $('rideDistance').addEventListener('input', updateSpeedPreview);
+  $('rideDuration').addEventListener('input', updateSpeedPreview);
+
+  function renderAll() {
+    const wt = computeWeekTotals(new Date());
+    renderWeekPill(wt);
+    renderRing(wt);
+    renderStreak();
+    renderLastRide();
+    renderPRs();
+    renderTrend();
+    renderBikes();
+    renderBikeSelect();
+    renderHistory();
+    $('distUnitLabel').textContent = unitLabel();
+  }
+
+  // ============================================================
+  // LOG A RIDE
+  // ============================================================
+  $('logRideBtn').addEventListener('click', () => {
+    const distDisp = parseFloat($('rideDistance').value);
+    const mins = parseFloat($('rideDuration').value);
+    if (!distDisp || distDisp <= 0) { alert('Enter a distance.'); return; }
+    if (!mins || mins <= 0) { alert('Enter a duration.'); return; }
+    logs.push({
+      id: uid(),
+      date: $('rideDate').value || todayStr(),
+      km: fromDisplayDist(distDisp),
+      minutes: mins,
+      elevM: parseFloat($('rideElev').value) || 0,
+      type: settings.selectedType,
+      bikeId: settings.activeBikeId || null,
+      note: $('rideNote').value.trim(),
+      loggedAt: Date.now()
+    });
+    saveLogs();
+    $('rideDistance').value = '';
+    $('rideDuration').value = '';
+    $('rideElev').value = '';
+    $('rideNote').value = '';
+    updateSpeedPreview();
+    renderAll();
+  });
+  $('bikeSelect').addEventListener('change', () => {
+    settings.activeBikeId = $('bikeSelect').value || null;
+    saveSettings();
+  });
+
+  // ============================================================
+  // BIKE MODAL
+  // ============================================================
+  let editingBikeId = null;
+  function openBikeModal(id) {
+    editingBikeId = id || null;
+    const bike = id ? settings.bikes.find(b => b.id === id) : null;
+    $('bikeModalTitle').textContent = bike ? 'Edit bike' : 'Add bike';
+    $('bikeName').value = bike ? bike.name : '';
+    $('bikeChainAt').value = Math.round(toDisplayDist(bike ? bike.chainRetireAtKm : 3000));
+    $('bikeUnitLabel').textContent = unitLabel();
+    $('bikeChainReset').style.display = bike ? 'block' : 'none';
+    $('bikeDelete').style.display = bike ? 'block' : 'none';
+    $('bikeModalBg').classList.add('show');
+  }
+  $('addBikeBtn').addEventListener('click', () => openBikeModal(null));
+  $('bikeModalCancel').addEventListener('click', () => $('bikeModalBg').classList.remove('show'));
+  $('bikeModalSave').addEventListener('click', () => {
+    const name = $('bikeName').value.trim();
+    if (!name) { alert('Enter a name.'); return; }
+    const chainRetireAtKm = fromDisplayDist(parseFloat($('bikeChainAt').value) || 3000);
+    if (editingBikeId) {
+      const b = settings.bikes.find(x => x.id === editingBikeId);
+      b.name = name; b.chainRetireAtKm = chainRetireAtKm;
+    } else {
+      const b = { id: uid(), name, chainRetireAtKm, chainResetAt: null, deletedAt: null };
+      settings.bikes.push(b);
+      if (!settings.activeBikeId) settings.activeBikeId = b.id;
+    }
+    saveSettings();
+    $('bikeModalBg').classList.remove('show');
+    renderAll();
+  });
+  $('bikeChainReset').addEventListener('click', () => {
+    if (!editingBikeId) return;
+    if (!confirm('Reset the chain-wear counter for this bike? Do this right after you actually replace the chain.')) return;
+    const b = settings.bikes.find(x => x.id === editingBikeId);
+    if (b) b.chainResetAt = Date.now();
+    saveSettings();
+    $('bikeModalBg').classList.remove('show');
+    renderAll();
+  });
+  $('bikeDelete').addEventListener('click', () => {
+    if (!editingBikeId) return;
+    if (!confirm('Delete this bike? Its logged mileage stays in your ride history.')) return;
+    const b = settings.bikes.find(x => x.id === editingBikeId);
+    if (b) b.deletedAt = Date.now();
+    if (settings.activeBikeId === editingBikeId) {
+      const next = settings.bikes.find(x => !x.deletedAt);
+      settings.activeBikeId = next ? next.id : null;
+    }
+    saveSettings();
+    $('bikeModalBg').classList.remove('show');
+    renderAll();
+  });
+
+  // ============================================================
+  // SETTINGS MODAL
+  // ============================================================
+  function renderSettingsModal() {
+    $('setUnitsSeg').querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.u === settings.units));
+    $('setGoalUnitLabel').textContent = unitLabel();
+    $('setWeeklyGoal').value = fmtDist(settings.weeklyGoalKm, 1);
+
+    const wrap = $('setTypes');
+    wrap.innerHTML = '';
+    settings.rideTypes.forEach((t, i) => {
+      const row = document.createElement('div');
+      row.className = 'po-set-row';
+      row.innerHTML = '<input type="text" value="' + escapeHtml(t) + '" data-i="' + i + '">' +
+        '<button type="button" class="po-mini-btn" data-action="del" data-i="' + i + '">✕</button>';
+      wrap.appendChild(row);
+    });
+    wrap.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('input', e => {
+        settings.rideTypes[parseInt(inp.dataset.i, 10)] = e.target.value;
+        saveSettings();
+      });
+    });
+    wrap.querySelectorAll('[data-action="del"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (settings.rideTypes.length <= 1) { alert('You need at least one type.'); return; }
+        settings.rideTypes.splice(parseInt(btn.dataset.i, 10), 1);
+        if (settings.rideTypes.indexOf(settings.selectedType) === -1) settings.selectedType = settings.rideTypes[0];
+        saveSettings();
+        renderSettingsModal();
+        renderTypeSeg();
+      });
+    });
+  }
+  $('setUnitsSeg').addEventListener('click', e => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    settings.units = btn.dataset.u;
+    saveSettings();
+    renderSettingsModal();
+    renderAll();
+  });
+  $('setWeeklyGoal').addEventListener('change', () => {
+    const v = parseFloat($('setWeeklyGoal').value);
+    if (v > 0) { settings.weeklyGoalKm = fromDisplayDist(v); saveSettings(); renderAll(); }
+  });
+  $('setAddType').addEventListener('click', () => {
+    settings.rideTypes.push('New type');
+    saveSettings();
+    renderSettingsModal();
+    renderTypeSeg();
+  });
+  $('settingsBtn').addEventListener('click', () => { renderSettingsModal(); $('setModalBg').classList.add('show'); });
+  $('setModalClose').addEventListener('click', () => $('setModalBg').classList.remove('show'));
+
+  // ---- Export / Import / Reset ----
+  $('setExport').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify({ settings, logs }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'ride-coach-export-' + todayStr() + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  });
+  $('setImport').addEventListener('click', () => $('setImportFile').click());
+  $('setImportFile').addEventListener('change', (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (data.settings) { settings = Object.assign({}, settings, data.settings); saveSettings(); settings = loadSettings(); }
+        if (Array.isArray(data.logs)) { logs = data.logs; saveLogs(); }
+        renderAll(); renderSettingsModal(); renderTypeSeg();
+        alert('Imported.');
+      } catch (err) { alert('Could not read that file.'); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+  $('setReset').addEventListener('click', () => {
+    if (!confirm('This deletes all rides, bikes, and settings for Ride Coach on this device. Continue?')) return;
+    localStorage.removeItem(SETTINGS_KEY);
+    localStorage.removeItem(LOGS_KEY);
+    settings = loadSettings();
+    logs = [];
+    saveSettings(); saveLogs();
+    renderAll(); renderSettingsModal(); renderTypeSeg();
+    $('setModalBg').classList.remove('show');
+  });
+
+  document.querySelectorAll('.po-modal-bg').forEach(bg => {
+    bg.addEventListener('click', (e) => { if (e.target === bg) bg.classList.remove('show'); });
+  });
+
+  // ============================================================
+  // BOOT
+  // ============================================================
+  $('rideDate').value = todayStr();
+  $('rideDate').max = todayStr();
+  renderTypeSeg();
+  renderAll();
+  updateSpeedPreview();
+})();
+</script>
+
+</body>
+</html>

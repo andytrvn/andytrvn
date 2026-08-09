@@ -24,9 +24,16 @@
   background: #0a0a0b;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  /* Enough nav destinations now that pills would get squeezed illegible
+     on narrow phones — scroll the bar horizontally instead of shrinking
+     pills down to unlabeled dots. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; -ms-overflow-style: none;
 }
+.topbar::-webkit-scrollbar { display: none; }
 .topbar-pill {
-  flex: 1 1 0; min-width: 0;
+  flex: 0 0 auto; min-width: 80px;
   display: inline-flex; align-items: center; gap: 8px;
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.04);
@@ -66,11 +73,11 @@
   white-space: nowrap;
 }
 .topbar-water-wrap {
-  flex: 1 1 0; min-width: 0;
+  flex: 0 0 auto;
   display: flex;
 }
 .topbar-water-pill {
-  flex: 1; min-width: 0;
+  flex: 0 0 auto; min-width: 76px;
   display: inline-flex; align-items: center; gap: 8px;
   padding: 8px 12px;
   background: rgba(125, 211, 252, 0.07);
@@ -136,7 +143,7 @@
 
 @media (max-width: 480px) {
   .topbar { padding-left: 10px; padding-right: 10px; gap: 4px; }
-  .topbar-pill, .topbar-water-pill { padding: 7px 9px; gap: 5px; }
+  .topbar-pill, .topbar-water-pill { padding: 7px 9px; gap: 5px; min-width: 68px; }
   .topbar-pill-label { font-size: 9px; letter-spacing: 0.10em; }
   .topbar-pill-count { font-size: 11px; }
   .topbar-water-add { width: 32px; font-size: 16px; }
@@ -216,6 +223,14 @@ body.topbar-modal-open {
   <a href="gym.html" class="topbar-pill" id="topbarGym">
     <span class="topbar-pill-dot"></span>
     <span class="topbar-pill-label">GYM</span>
+  </a>
+  <a href="running.html" class="topbar-pill" id="topbarRun">
+    <span class="topbar-pill-dot"></span>
+    <span class="topbar-pill-label">RUN</span>
+  </a>
+  <a href="cycling.html" class="topbar-pill" id="topbarRide">
+    <span class="topbar-pill-dot"></span>
+    <span class="topbar-pill-label">RIDE</span>
   </a>
   <a href="finance.html" class="topbar-pill" id="topbarFinance">
     <span class="topbar-pill-dot"></span>

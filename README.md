@@ -43,6 +43,8 @@ Open any `.html` file directly in your browser — no build step, no install.
 | [po-water.html](po-water.html) | Water intake tracker |
 | [finance.html](finance.html) | Finances |
 | [gym.html](gym.html) | Progressive overload gym tracker |
+| [running.html](running.html) | Run Coach — weekly mileage goal, pace, PRs, shoe mileage |
+| [cycling.html](cycling.html) | Ride Coach — weekly mileage goal, avg speed, elevation, bike chain-wear tracking |
 | [topbar.js](topbar.js) | Shared top bar — auto-injected into pages that `<script src="topbar.js">` |
 
 Each app stores its own state in browser `localStorage`. No accounts, no server.
