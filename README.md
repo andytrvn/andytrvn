@@ -26,6 +26,20 @@ stay in sync automatically:
 - Without signing in, everything works exactly as before: pure
   `localStorage`, no network calls, no account needed.
 
+## Strava import (Run Coach / Ride Coach)
+
+Both trackers can pull your activities in from Strava — including Zwift
+rides, if your Zwift is set to auto-upload to Strava (Zwift Companion app
+→ Connect to Strava). Connecting once in either page's Settings covers
+both, since they share the same login.
+
+This needs a small server-side piece because Strava's OAuth token
+endpoint doesn't support CORS, so a browser can't do the token exchange
+directly — see [strava-proxy-worker.js](strava-proxy-worker.js) for the
+~5-minute setup (a free Cloudflare Worker). Until it's set up, the
+Strava section in Settings just says so and the rest of the app works
+exactly the same, local-only.
+
 ## Deploy your own copy
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FRowanThistlebrooke%2FYTdashh1)
