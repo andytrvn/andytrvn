@@ -483,14 +483,6 @@ img, video, canvas, svg { max-width: 100%; }
     </div>
 
     <div class="po-set-section">
-      <h4>Import from MyFitnessPal</h4>
-      <p class="hint">MyFitnessPal doesn't offer live sync to third-party apps (their public API has been closed to new developers for years, and unofficial workarounds are unreliable). Instead: in MyFitnessPal, go to <strong>More → Settings → Export Data</strong>, request your nutrition export, and upload the CSV it emails you here. Re-uploading later only adds new entries.</p>
-      <button class="po-btn-secondary" id="mfpImportBtn" type="button">Upload MyFitnessPal CSV</button>
-      <input type="file" id="mfpImportFile" accept=".csv" style="display:none">
-      <div id="mfpImportStatus" style="font-size:11px;color:var(--text-3);margin-top:8px;"></div>
-    </div>
-
-    <div class="po-set-section">
       <h4>Data</h4>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="po-btn-secondary" id="setExport" type="button">Export JSON</button>
@@ -750,7 +742,6 @@ img, video, canvas, svg { max-width: 100%; }
       if (r.carbsG) macroBits.push(Math.round(r.carbsG) + 'c');
       if (r.fatG) macroBits.push(Math.round(r.fatG) + 'f');
       if (macroBits.length) bits.push(macroBits.join('/'));
-      if (r.source === 'mfp') bits.push('via MFP');
       row.innerHTML =
         '<span class="po-hist-date">' + r.date.slice(5) + '</span>' +
         '<span class="po-hist-set">' + bits.filter(Boolean).join(' · ') + '</span>' +
@@ -921,104 +912,6 @@ img, video, canvas, svg { max-width: 100%; }
 
   document.querySelectorAll('.po-modal-bg').forEach(bg => {
     bg.addEventListener('click', (e) => { if (e.target === bg) bg.classList.remove('show'); });
-  });
-
-  // ============================================================
-  // MYFITNESSPAL CSV IMPORT
-  // MFP's own API has been closed to new developers for years, and
-  // unofficial scrapers are unreliable — so this parses the CSV MFP
-  // emails you from Settings → Export Data instead. Fully client-side,
-  // no account, no server.
-  // ============================================================
-  function parseCsv(text) {
-    const rows = [];
-    let row = [], field = '', inQuotes = false;
-    for (let i = 0; i < text.length; i++) {
-      const c = text[i];
-      if (inQuotes) {
-        if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false; }
-        else field += c;
-      } else {
-        if (c === '"') inQuotes = true;
-        else if (c === ',') { row.push(field); field = ''; }
-        else if (c === '\r') { /* skip */ }
-        else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
-        else field += c;
-      }
-    }
-    if (field.length || row.length) { row.push(field); rows.push(row); }
-    return rows.filter(r => r.length > 1 || (r[0] || '').trim() !== '');
-  }
-
-  function findCol(header, candidates) {
-    const norm = header.map(h => h.toLowerCase().replace(/\s*\([^)]*\)/g, '').trim());
-    for (const cand of candidates) {
-      const i = norm.indexOf(cand);
-      if (i !== -1) return i;
-    }
-    return -1;
-  }
-
-  $('mfpImportBtn').addEventListener('click', () => $('mfpImportFile').click());
-  $('mfpImportFile').addEventListener('change', (e) => {
-    const file = e.target.files[0]; if (!file) return;
-    const statusEl = $('mfpImportStatus');
-    statusEl.textContent = 'Reading…';
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const rows = parseCsv(String(reader.result));
-        if (!rows.length) throw new Error('empty');
-        const header = rows[0];
-        const iDate = findCol(header, ['date']);
-        const iMeal = findCol(header, ['meal']);
-        const iFood = findCol(header, ['food', 'item', 'description']);
-        const iCal = findCol(header, ['calories']);
-        const iProtein = findCol(header, ['protein']);
-        const iCarbs = findCol(header, ['carbohydrates', 'carbs']);
-        const iFat = findCol(header, ['fat']);
-        if (iDate === -1 || iCal === -1) throw new Error('unrecognized format');
-
-        const importedKeys = new Set(settings.mfpImportedKeys || []);
-        let added = 0;
-        for (let r = 1; r < rows.length; r++) {
-          const row = rows[r];
-          const dateRaw = (row[iDate] || '').trim();
-          if (!dateRaw) continue;
-          const dateMatch = dateRaw.match(/\d{4}-\d{2}-\d{2}/);
-          const date = dateMatch ? dateMatch[0] : dateRaw;
-          const cal = parseFloat(row[iCal]) || 0;
-          if (cal <= 0) continue;
-          const meal = iMeal !== -1 ? (row[iMeal] || '').trim() : '';
-          const name = iFood !== -1 ? (row[iFood] || '').trim() : 'Imported food';
-          const key = date + '|' + meal + '|' + name + '|' + cal;
-          if (importedKeys.has(key)) continue;
-
-          const mealMatch = settings.mealTypes.find(m => m.toLowerCase() === meal.toLowerCase());
-          logs.push({
-            id: uid(), date, meal: mealMatch || settings.mealTypes[settings.mealTypes.length - 1],
-            name: name || 'Imported food',
-            cal,
-            proteinG: iProtein !== -1 ? (parseFloat(row[iProtein]) || 0) : 0,
-            carbsG: iCarbs !== -1 ? (parseFloat(row[iCarbs]) || 0) : 0,
-            fatG: iFat !== -1 ? (parseFloat(row[iFat]) || 0) : 0,
-            loggedAt: Date.now(),
-            source: 'mfp'
-          });
-          importedKeys.add(key);
-          added++;
-        }
-        settings.mfpImportedKeys = Array.from(importedKeys);
-        saveSettings();
-        saveLogs();
-        renderAll();
-        statusEl.textContent = added > 0 ? ('Imported ' + added + ' new entr' + (added === 1 ? 'y' : 'ies') + '.') : 'No new entries found (already imported, or an empty export).';
-      } catch (err) {
-        statusEl.textContent = 'Could not read that file — expected the CSV MyFitnessPal emails from Settings → Export Data.';
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
   });
 
   // ============================================================
