@@ -517,11 +517,6 @@ main {
   const TEMPLATE_VERSION = 5;
 
   const STACK_DEFAULTS = [
-    { id: 'm1', name: 'XXXXX - Supplement of choice', dose: '', window: 'morning', note: 'how much MG, meal times, any data below', tag: null,    ordered: true  },
-    { id: 'm2', name: 'XXXXX - Supplement of choice', dose: '', window: 'morning', note: 'how much MG, meal times, any data below', tag: 'stack', ordered: true  },
-    { id: 'm3', name: 'XXXXX - Supplement of choice', dose: '', window: 'morning', note: 'how much MG, meal times, any data below', tag: null,    ordered: true  },
-    { id: 'l1', name: 'XXXXX - Supplement of choice', dose: '', window: 'lunch',   note: 'how much MG, meal times, any data below', tag: null,    ordered: true  },
-    { id: 'l2', name: 'XXXXX - Supplement of choice', dose: '', window: 'lunch',   note: 'how much MG, meal times, any data below', tag: null,    ordered: true  },
     { id: 'e1', name: 'XXXXX - Supplement of choice', dose: '', window: 'evening', note: 'how much MG, meal times, any data below', tag: null,    ordered: true  },
     { id: 'e2', name: 'XXXXX - Supplement of choice', dose: '', window: 'evening', note: 'how much MG, meal times, any data below', tag: 'not-ordered', ordered: false },
     { id: 'e3', name: 'XXXXX - Supplement of choice', dose: '', window: 'evening', note: 'how much MG, meal times, any data below', tag: null,    ordered: true  },
@@ -622,6 +617,17 @@ main {
       storeSet('stack:items', fresh);
       storeSet('stack:version', TEMPLATE_VERSION);
       return fresh;
+    }
+    // One-time cleanup: drop leftover placeholder rows ("XXXXX - Supplement
+    // of choice") outside the evening window — never-edited template junk
+    // that just sits there unchecked and drags the STACK pill red every
+    // evening. Evening placeholders are left alone in case they're still
+    // being filled in. Anything you've actually renamed is untouched,
+    // since it no longer matches the placeholder text.
+    const cleaned = stored.filter(it => !(it && it.name === 'XXXXX - Supplement of choice' && it.window !== 'evening'));
+    if (cleaned.length !== stored.length) {
+      setItems(cleaned);
+      return cleaned;
     }
     return stored;
   }
