@@ -40,6 +40,16 @@ directly — see [strava-proxy-worker.js](strava-proxy-worker.js) for the
 Strava section in Settings just says so and the rest of the app works
 exactly the same, local-only.
 
+## MyFitnessPal import (Food Log)
+
+MyFitnessPal closed their public API to new developers years ago, and
+unofficial workarounds that scrape their site are unreliable enough
+that they're not worth building on. So Food Log takes CSV instead of
+live sync: in MyFitnessPal, go to **More → Settings → Export Data**,
+request a nutrition export, and upload the CSV it emails you in Food
+Log's Settings. Re-uploading later only adds entries it hasn't seen
+before, so it's safe to do repeatedly as you export more history.
+
 ## Deploy your own copy
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FRowanThistlebrooke%2FYTdashh1)
@@ -59,6 +69,7 @@ Open any `.html` file directly in your browser — no build step, no install.
 | [gym.html](gym.html) | Progressive overload gym tracker |
 | [running.html](running.html) | Run Coach — weekly mileage goal, pace, PRs, shoe mileage |
 | [cycling.html](cycling.html) | Ride Coach — weekly mileage goal, avg speed, elevation, bike chain-wear tracking |
+| [food.html](food.html) | Food Log — daily calorie/macro goal ring, streak, favorites quick-add, MyFitnessPal CSV import |
 | [topbar.js](topbar.js) | Shared top bar — auto-injected into pages that `<script src="topbar.js">` |
 
 Each app stores its own state in browser `localStorage`. No accounts, no server.

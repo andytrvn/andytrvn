@@ -232,6 +232,10 @@ body.topbar-modal-open {
     <span class="topbar-pill-dot"></span>
     <span class="topbar-pill-label">RIDE</span>
   </a>
+  <a href="food.html" class="topbar-pill" id="topbarFood">
+    <span class="topbar-pill-dot"></span>
+    <span class="topbar-pill-label">FOOD</span>
+  </a>
   <a href="finance.html" class="topbar-pill" id="topbarFinance">
     <span class="topbar-pill-dot"></span>
     <span class="topbar-pill-label">FINANCE</span>
