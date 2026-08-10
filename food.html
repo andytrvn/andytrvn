@@ -307,6 +307,25 @@ img, video, canvas, svg { max-width: 100%; }
 .dr-streak-num { font-family: var(--font-mono); font-weight: 700; font-variant-numeric: tabular-nums; }
 .dr-streak.dr-streak-active { background: rgba(242,192,99,0.10); color: #F2C063; border-color: rgba(242,192,99,0.32); }
 
+/* ----- Water (shares state with health.html's water tracker) ----- */
+.water-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.water-count { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+.water-sub { font-size: 11px; color: var(--text-3); margin-top: 4px; }
+.water-add-btn {
+  flex-shrink: 0; width: 52px; height: 52px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.22), rgba(110, 231, 183, 0.22));
+  color: #FFFFFF; border-radius: 14px;
+  font-family: inherit; font-size: 19px; font-weight: 700;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, transform 0.10s;
+}
+.water-add-btn:hover { background: linear-gradient(180deg, rgba(125, 211, 252, 0.34), rgba(110, 231, 183, 0.34)); }
+.water-add-btn:active { transform: scale(0.94); }
+.water-add-btn.flash { background: linear-gradient(180deg, rgba(125, 211, 252, 0.65), rgba(110, 231, 183, 0.65)); }
+.water-link { display: block; margin-top: 12px; font-size: 11px; color: var(--text-3); text-decoration: none; }
+.water-link:hover { color: var(--text-2); text-decoration: underline; }
+
 @media (max-width: 480px) {
   .dr-ring { width: 128px; height: 128px; }
   .dr-ring-percent { font-size: 25px; }
@@ -363,6 +382,18 @@ img, video, canvas, svg { max-width: 100%; }
         </div>
       </div>
     </div>
+  </div>
+
+  <div class="card">
+    <div class="po-sub-title">Water</div>
+    <div class="water-row">
+      <div>
+        <div class="water-count"><span id="waterCount">0</span> <span class="po-unit">/ <span id="waterTotal">8</span></span></div>
+        <div class="water-sub" id="waterSub">bottles today</div>
+      </div>
+      <button class="water-add-btn" id="waterAddBtn" type="button" aria-label="Log one drink">+1</button>
+    </div>
+    <a href="health.html#water" class="water-link">Adjust target in the full water tracker →</a>
   </div>
 
   <div class="card">
@@ -781,7 +812,82 @@ img, video, canvas, svg { max-width: 100%; }
     renderFavChips();
     renderTrend();
     renderHistory();
+    renderWater();
   }
+
+  // ============================================================
+  // WATER — a small addition, not a full second tracker. Reads and
+  // writes the same 'po_water_v1' key the topbar's water pill and
+  // health.html's water tracker already use, and mirrors the topbar's
+  // exact target formula, so the numbers always agree everywhere.
+  // Adjusting the target itself (weight, activity, caffeine, etc.)
+  // stays in the full tracker rather than being duplicated here.
+  // ============================================================
+  const WATER_KEY = 'po_water_v1';
+  function waterDefaultState() {
+    return {
+      unit: 'bottle', bottleMl: 500, glassMl: 250, weightUnit: 'kg',
+      profile: { weightKg: 75, age: 25, sex: 'm', activityHrsPerWeek: 5 },
+      caffeineMgPerDay: 200, substances: [], logs: {}
+    };
+  }
+  function waterLoadState() {
+    try { const v = JSON.parse(localStorage.getItem(WATER_KEY)); if (v && typeof v === 'object') return v; } catch (e) {}
+    return waterDefaultState();
+  }
+  function waterSaveState(s) { try { localStorage.setItem(WATER_KEY, JSON.stringify(s)); } catch (e) {} }
+  function waterCalendarKey() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function waterTarget(state) {
+    const p = state.profile || { weightKg: 75 };
+    const wKg = state.weightUnit === 'lb' ? (p.weightKg || 0) / 2.20462 : (p.weightKg || 0);
+    const base = wKg * 35;
+    const exercise = (p.activityHrsPerWeek || 0) / 7 * 500;
+    const caffeine = Math.max(0, (state.caffeineMgPerDay || 0) - 200) * 1.5;
+    const subs = (state.substances || []).reduce((s, x) => {
+      const dose = (x && x.dose != null ? x.dose : (x && x.defaultDose)) || 0;
+      return s + Math.max(0, dose * ((x && x.mlPerUnit) || 0));
+    }, 0);
+    let adjust = 0;
+    if (p.sex === 'm') adjust += 200;
+    if ((p.age || 0) >= 50) adjust += 100;
+    const totalMl = base + exercise + caffeine + subs + adjust;
+    let unitVol;
+    if (state.unit === 'glass') unitVol = state.glassMl || 250;
+    else if (state.unit === 'oz') unitVol = 30;
+    else if (state.unit === 'ml') unitVol = 1;
+    else unitVol = state.bottleMl || 500;
+    return Math.max(1, Math.ceil(totalMl / unitVol));
+  }
+  function waterUnitWord(unit) {
+    return unit === 'glass' ? 'glasses' : unit === 'oz' ? 'oz' : unit === 'ml' ? 'ml' : 'bottles';
+  }
+  function renderWater() {
+    const state = waterLoadState();
+    const done = (state.logs || {})[waterCalendarKey()] || 0;
+    const total = waterTarget(state);
+    $('waterCount').textContent = done;
+    $('waterTotal').textContent = total;
+    $('waterSub').textContent = waterUnitWord(state.unit) + ' today';
+  }
+  $('waterAddBtn').addEventListener('click', () => {
+    const state = waterLoadState();
+    state.logs = state.logs || {};
+    const k = waterCalendarKey();
+    state.logs[k] = (state.logs[k] || 0) + 1;
+    waterSaveState(state);
+    renderWater();
+    const btn = $('waterAddBtn');
+    btn.classList.add('flash');
+    setTimeout(() => btn.classList.remove('flash'), 220);
+  });
+  // Catch it if water gets logged elsewhere (the topbar's own +1
+  // button, another tab, or a Drive sync pull) while this page sits open.
+  window.addEventListener('focus', renderWater);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) renderWater(); });
+  setInterval(renderWater, 30 * 1000);
 
   // ============================================================
   // LOG FOOD
