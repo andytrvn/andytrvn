@@ -439,6 +439,19 @@ body.topbar-modal-open {
   }
   let dsBaselineHashes = dsLoadBaseline();
 
+  // Last-synced snapshot of each array-valued key (goal lists, stack items,
+  // gym sets, ...), kept separately from the hash baseline above so array
+  // merges can tell "removed since baseline" apart from "never had it" —
+  // see dsMergeArrays. Only array values are kept here (never photo-sized
+  // blobs) so this stays cheap.
+  function dsLoadBaselineArrays() {
+    try { return JSON.parse(localStorage.getItem('__ds_baseline_arrays')) || {}; } catch (e) { return {}; }
+  }
+  function dsSaveBaselineArrays(arrays) {
+    try { _dsOrigSet('__ds_baseline_arrays', JSON.stringify(arrays)); } catch (e) {}
+  }
+  let dsBaselineArrays = dsLoadBaselineArrays();
+
   // Wrap setItem/removeItem so a sync-side error can NEVER prevent the
   // underlying write from happening. The original call always runs;
   // any error in sync scheduling is swallowed.
@@ -616,20 +629,34 @@ body.topbar-modal-open {
 
   // If a key's local and remote values have both changed since the last
   // sync AND both happen to be JSON arrays (goal lists, stack items, gym
-  // sets, ...), union them instead of picking one side wholesale — this is
-  // what makes "added a task on both devices before either had synced"
-  // end up with both tasks instead of whichever device synced last winning.
-  // Returns null if the values aren't both arrays, so the caller falls
-  // back to plain last-writer-wins for that key.
-  function dsUnionArrays(localStr, remoteStr) {
+  // sets, ...), three-way merge them against the last-synced baseline
+  // instead of picking one side wholesale. This is what makes "added a
+  // task on both devices before either had synced" end up with both tasks,
+  // while still honoring "deleted a task on this device" instead of a
+  // stale remote copy silently resurrecting it (plain union couldn't tell
+  // those two cases apart — a removed item and a not-yet-seen item both
+  // just look "not on the other side"). Returns null if the values aren't
+  // both arrays, so the caller falls back to plain last-writer-wins.
+  function dsMergeArrays(localStr, remoteStr, baselineArr) {
     const la = dsTryParseArray(localStr);
     const ra = dsTryParseArray(remoteStr);
     if (!la || !ra) return null;
-    const seen = new Set(ra.map(x => JSON.stringify(x)));
-    const out = ra.slice();
+    const baseSet = new Set((baselineArr || []).map(x => JSON.stringify(x)));
+    const localSet = new Set(la.map(x => JSON.stringify(x)));
+    const remoteSet = new Set(ra.map(x => JSON.stringify(x)));
+    const out = [];
+    const seen = new Set();
+    for (const item of ra) {
+      const s = JSON.stringify(item);
+      if (seen.has(s)) continue;
+      if (baseSet.has(s) && !localSet.has(s)) continue; // removed locally since baseline
+      out.push(item); seen.add(s);
+    }
     for (const item of la) {
       const s = JSON.stringify(item);
-      if (!seen.has(s)) { out.push(item); seen.add(s); }
+      if (seen.has(s)) continue;
+      if (baseSet.has(s) && !remoteSet.has(s)) continue; // removed remotely since baseline
+      out.push(item); seen.add(s);
     }
     return JSON.stringify(out);
   }
@@ -666,8 +693,8 @@ body.topbar-modal-open {
         const isDirty = !knownHash || knownHash !== dsHash(local[k]);
         if (!isDirty) continue;
         if (k in remoteData && remoteData[k] !== local[k]) {
-          const unioned = dsUnionArrays(local[k], remoteData[k]);
-          merged[k] = unioned != null ? unioned : local[k];
+          const merged3way = dsMergeArrays(local[k], remoteData[k], dsBaselineArrays[k]);
+          merged[k] = merged3way != null ? merged3way : local[k];
         } else {
           merged[k] = local[k];
         }
@@ -687,9 +714,16 @@ body.topbar-modal-open {
 
       const changedLocally = dsApplyRemoteSnapshot(merged);
       const newHashes = {};
-      for (const k of Object.keys(merged)) newHashes[k] = dsHash(merged[k]);
+      const newBaselineArrays = {};
+      for (const k of Object.keys(merged)) {
+        newHashes[k] = dsHash(merged[k]);
+        const arr = dsTryParseArray(merged[k]);
+        if (arr) newBaselineArrays[k] = arr;
+      }
       dsBaselineHashes = newHashes;
       dsSaveBaseline(newHashes);
+      dsBaselineArrays = newBaselineArrays;
+      dsSaveBaselineArrays(newBaselineArrays);
       dsSetMeta({ lastSavedAt: savedAt });
       dsSetStatus('synced');
       if (changedLocally && opts.reloadIfChanged && !dsIsEditing()) {
