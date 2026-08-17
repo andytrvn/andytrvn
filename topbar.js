@@ -641,6 +641,14 @@ body.topbar-modal-open {
     const la = dsTryParseArray(localStr);
     const ra = dsTryParseArray(remoteStr);
     if (!la || !ra) return null;
+    // No baseline recorded for this key yet (e.g. the very first sync on a
+    // device after this per-item baseline tracking was introduced) — we
+    // can't tell "removed since baseline" apart from "never had it," so
+    // trust local rather than risk resurrecting something just deleted.
+    // baselineArr is `undefined` here only when the key has truly never
+    // been recorded; a previously-synced-empty list is stored as `[]`,
+    // which is distinct and still merges normally below.
+    if (baselineArr === undefined) return JSON.stringify(la);
     const baseSet = new Set((baselineArr || []).map(x => JSON.stringify(x)));
     const localSet = new Set(la.map(x => JSON.stringify(x)));
     const remoteSet = new Set(ra.map(x => JSON.stringify(x)));
